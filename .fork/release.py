@@ -10,7 +10,6 @@ import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 UPSTREAM = "chen08209/FlClash"
@@ -228,11 +227,9 @@ def prepare():
         match = re.search(r"^version: (\d+\.\d+\.\d+)\+(\d+)$", pubspec, re.M)
         if not match or match[1] != upstream_tag[1:]:
             raise RuntimeError("Upstream pubspec version does not match its stable tag")
-        clock_code = int(datetime.now(timezone.utc).strftime("%Y%m%d%H"))
-        version_code = max(int(match[2]), clock_code, int(previous.get("version_code", 0)) + 1)
+        version_code = int(match[2])
         if version_code + 2000 > 2100000000:
             raise RuntimeError("Android versionCode exceeds its maximum")
-        pubspec_path.write_text(pubspec[:match.start()] + f"version: {match[1]}+{version_code}" + pubspec[match.end():])
         save(maintenance / "build.json", dict(upstream_tag=upstream_tag, upstream_sha=upstream_sha,
              upstream_release_id=release["id"], fork_tag=fork_tag, version_code=version_code))
         run("git", "add", "-A", cwd=source)
