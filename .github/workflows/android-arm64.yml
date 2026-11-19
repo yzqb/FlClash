@@ -1,0 +1,141 @@
+name: Android arm64 stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: 'Stable upstream tag (empty selects the latest vX.Y.Z release)'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: android-arm64-stable
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.repository == 'yzqb/FlClash'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+      GIT_AUTHOR_NAME: github-actions[bot]
+      GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      GIT_COMMITTER_NAME: github-actions[bot]
+      GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - name: Prepare stable source and check for an existing release
+        id: prepare
+        env:
+          REQUESTED_TAG: ${{ inputs.upstream_tag }}
+        run: python3 .fork/release.py prepare
+      - uses: actions/setup-java@v4
+        if: steps.prepare.outputs.skip != 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-go@v5
+        if: steps.prepare.outputs.skip != 'true'
+        with:
+          go-version: ${{ steps.prepare.outputs.go }}
+          cache: false
+      - uses: subosito/flutter-action@v2
+        if: steps.prepare.outputs.skip != 'true'
+        with:
+          channel: stable
+          flutter-version: ${{ steps.prepare.outputs.flutter }}
+          cache: true
+      - name: Install the stable tag's native toolchains
+        if: steps.prepare.outputs.skip != 'true'
+        env:
+          SDK_VERSION: ${{ steps.prepare.outputs.sdk }}
+          NDK_VERSION: ${{ steps.prepare.outputs.ndk }}
+          RUST_VERSION: ${{ steps.prepare.outputs.rust }}
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-$SDK_VERSION" "ndk;$NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target aarch64-linux-android
+      - name: Install Dart dependencies
+        if: steps.prepare.outputs.skip != 'true'
+        working-directory: ${{ steps.prepare.outputs.source }}
+        run: flutter pub get
+      - name: Fetch the stable tag's pinned CA bundle
+        if: steps.prepare.outputs.skip != 'true'
+        working-directory: ${{ steps.prepare.outputs.source }}
+        run: |
+          # Fail if an upstream update changes this reviewed pin; do not silently use a stale bundle.
+          python3 - <<'PY'
+          import json, os, re, subprocess, urllib.request, hashlib
+          from pathlib import Path
+          sha=json.loads(Path('.fork/build.json').read_text())['upstream_sha']
+          text=subprocess.check_output(['git','show',f'{sha}:.github/workflows/build.yaml'],text=True)
+          bundle=re.search(r'^          CA_BUNDLE: (cacert-[0-9-]+\.pem)$',text,re.M)
+          digest=re.search(r'^          CA_BUNDLE_SHA256: ([0-9a-f]{64})$',text,re.M)
+          if not bundle or not digest: raise SystemExit('Review upstream CA bundle format')
+          data=urllib.request.urlopen('https://curl.se/ca/'+bundle[1],timeout=60).read()
+          if hashlib.sha256(data).hexdigest()!=digest[1]: raise SystemExit('CA bundle checksum mismatch')
+          Path('core/Clash.Meta/component/ca/ca-certificates.crt').write_bytes(data)
+          PY
+      - name: Configure fixed release signing
+        if: steps.prepare.outputs.skip != 'true'
+        id: signing
+        working-directory: ${{ steps.prepare.outputs.source }}
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          for name in ('KEYSTORE','KEY_ALIAS','STORE_PASSWORD','KEY_PASSWORD'):
+              if not os.environ.get(name): raise SystemExit('Missing signing secret: '+name)
+          def prop(value):
+              return ''.join('\\u%04x'%ord(c) if ord(c)>126 else
+                  {'\\':'\\\\','\n':'\\n','\r':'\\r','\t':'\\t','=':'\\=',':':'\\:',' ':'\\ '}.get(c,c)
+                  for c in value)
+          key=Path('android/app/keystore.jks')
+          key.write_bytes(base64.b64decode(''.join(os.environ['KEYSTORE'].split()),validate=True))
+          key.chmod(0o600)
+          path=Path('android/local.properties')
+          with path.open('a') as file:
+              file.write('\nkeyAlias='+prop(os.environ['KEY_ALIAS'])+'\n')
+              file.write('storePassword='+prop(os.environ['STORE_PASSWORD'])+'\n')
+              file.write('keyPassword='+prop(os.environ['KEY_PASSWORD'])+'\n')
+          path.chmod(0o600)
+          PY
+          cert=$(keytool -exportcert -alias "$KEY_ALIAS" -keystore android/app/keystore.jks -storepass:env STORE_PASSWORD | sha256sum | cut -d' ' -f1)
+          test ${#cert} -eq 64
+          echo "cert=$cert" >> "$GITHUB_OUTPUT"
+      - name: Build only Android arm64 with the stable UI
+        if: steps.prepare.outputs.skip != 'true'
+        working-directory: ${{ steps.prepare.outputs.source }}
+        env:
+          FORK_TAG: ${{ steps.prepare.outputs.tag }}
+        run: dart tool/package.dart android --env stable --arch arm64 --tag "$FORK_TAG"
+      - name: Verify APK, signer, update names, manifest and checksums
+        if: steps.prepare.outputs.skip != 'true'
+        env:
+          EXPECTED_CERT_SHA256: ${{ steps.signing.outputs.cert }}
+        run: python3 .fork/release.py verify
+      - name: Publish a verified stable release with the exact upstream notes
+        if: steps.prepare.outputs.skip != 'true'
+        run: python3 .fork/release.py publish
+      - name: Remove ephemeral signing files
+        if: always() && steps.prepare.outputs.source != ''
+        env:
+          SOURCE: ${{ steps.prepare.outputs.source }}
+        run: |
+          rm -f "$SOURCE/android/app/keystore.jks" "$SOURCE/android/local.properties"
