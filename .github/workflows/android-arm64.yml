@@ -2,7 +2,7 @@ name: Android arm64 stable
 
 on:
   schedule:
-    - cron: '0 1 * * 4'
+    - cron: '0 8 * * 6'
   workflow_dispatch:
     inputs:
       upstream_tag:
