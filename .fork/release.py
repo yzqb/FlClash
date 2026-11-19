@@ -108,6 +108,20 @@ def check_sources(repo):
     assert len(entries) == 1 and entries[0].get(ANDROID + "value") == "false"
 
 
+def release_notes(release):
+    """Keep upstream changes; omit download badges and the OS download section."""
+    body = release.get("body") or ""
+    heading = re.search(r"(?im)^\s*(?:\*\*)?Download based on your OS:", body)
+    if heading:
+        body = body[:heading.start()]
+    body = re.sub(
+        r'(?ms)^<div\s+align=[\"\']?center[\"\']?>\s*'
+        r'\[!\[Release Downloads\]\([^\n]+\)\]\([^\n]+\)\s*</div>\s*',
+        '', body)
+    body = re.sub(r'(?m)^\[!\[Release Downloads\]\([^\n]+\)\]\([^\n]+\)\s*$', '', body)
+    return body.rstrip() + "\n"
+
+
 def stable_release(tag):
     if tag:
         if not STABLE.fullmatch(tag):
@@ -179,8 +193,8 @@ def prepare():
     if existing_release and not existing_release["draft"]:
         if existing_release["prerelease"]:
             raise RuntimeError("Existing fork release is incorrectly marked as a prerelease")
-        if (existing_release["body"] or "") != (release["body"] or ""):
-            raise RuntimeError("Published body differs from upstream; do not silently rewrite a release")
+        if (existing_release["body"] or "") != release_notes(release):
+            raise RuntimeError("Published body differs from the filtered upstream changelog")
         names = {a["name"] for a in existing_release["assets"]}
         version = fork_tag[1:]
         if not {f"FlClash-dev-{version}-android-arm64.apk", f"FlClash-dev-{version}-SHA256SUMS"} <= names:
@@ -369,7 +383,7 @@ def publish():
         run("git", "tag", tag, context["custom_sha"], cwd=source)
         run("git", "push", "origin", f"refs/tags/{tag}", cwd=source)
     notes = Path(os.environ["RUNNER_TEMP"]) / "upstream-release-body.md"
-    notes.write_bytes((upstream["body"] or "").encode("utf-8"))
+    notes.write_bytes(release_notes(upstream).encode("utf-8"))
     title = upstream["name"]
     if not isinstance(title, str) or not title:
         raise RuntimeError("Upstream release title is empty; review rather than invent a title")
@@ -383,7 +397,7 @@ def publish():
             "--notes-file", notes, "--draft", "--prerelease=false")
     draft = api(f"repos/{FORK}/releases/tags/{tag}")
     assert draft["draft"] and not draft["prerelease"]
-    assert (draft["body"] or "") == (upstream["body"] or "") and draft["name"] == title
+    assert (draft["body"] or "") == release_notes(upstream) and draft["name"] == title
     assert {a["name"] for a in draft["assets"]} == {Path(p).name for p in context["assets"]}
     with tempfile.TemporaryDirectory(prefix="verify-release-", dir=os.environ["RUNNER_TEMP"]) as directory:
         for filename in context["assets"]:
@@ -397,7 +411,7 @@ def publish():
     run("gh", "release", "edit", tag, "--repo", FORK, "--draft=false", "--prerelease=false", "--latest")
     published = api(f"repos/{FORK}/releases/tags/{tag}")
     assert not published["draft"] and not published["prerelease"]
-    assert (published["body"] or "") == (upstream["body"] or "") and published["name"] == title
+    assert (published["body"] or "") == release_notes(upstream) and published["name"] == title
     # The public release is authoritative deduplication state. This record is only written afterward.
     save(source / ".fork/published.json", dict(upstream_tag=upstream["tag_name"],
          upstream_release_id=upstream["id"], fork_tag=tag, custom_sha=context["custom_sha"],

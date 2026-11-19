@@ -139,7 +139,7 @@ jobs:
         env:
           EXPECTED_CERT_SHA256: ${{ steps.signing.outputs.cert }}
         run: python3 .fork/release.py verify
-      - name: Publish a verified stable release with the exact upstream notes
+      - name: Publish a verified stable release with the upstream changelog
         if: steps.prepare.outputs.skip != 'true'
         run: python3 .fork/release.py publish
       - name: Preserve built release files after failure
