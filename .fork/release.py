@@ -179,6 +179,15 @@ def prepare():
         print(f"Already published: {fork_tag}")
         output(skip="true")
         return
+    if os.environ.get("GITHUB_EVENT_NAME") == "schedule":
+        artifacts = api(f"repos/{FORK}/actions/artifacts?name=failed-{fork_tag}&per_page=100")
+        if any(a["name"] == f"failed-{fork_tag}" and not a["expired"] for a in artifacts["artifacts"]):
+            print(f"Scheduled retry suppressed for {fork_tag}; use workflow_dispatch to retry")
+            output(skip="true")
+            return
+    save(Path(os.environ["RUNNER_TEMP"]) / "flclash-failure/build.json",
+         dict(upstream_tag=upstream_tag, upstream_release_id=release["id"], fork_tag=fork_tag))
+    output(tag=fork_tag)
     run("git", "fetch", "--no-tags", f"https://github.com/{UPSTREAM}.git",
         f"refs/tags/{upstream_tag}:refs/fork-upstream/{upstream_tag}", cwd=control)
     upstream_sha = run("git", "rev-parse", f"refs/fork-upstream/{upstream_tag}^{{commit}}", cwd=control)
@@ -242,6 +251,21 @@ def prepare():
     print(f"Prepared {upstream_tag} as {fork_tag}; versionCode={version_code}")
 
 
+def sdk_package():
+    from urllib.request import urlopen
+    version = os.environ["SDK_VERSION"]
+    if not re.fullmatch(r"[0-9]+", version):
+        raise RuntimeError("Unexpected compileSdk version")
+    with urlopen("https://dl.google.com/android/repository/repository2-3.xml", timeout=60) as response:
+        metadata = ET.fromstring(response.read())
+    available = {node.get("path") for node in metadata if node.tag.endswith("remotePackage")}
+    for name in (f"platforms;android-{version}", f"platforms;android-{version}.0"):
+        if name in available:
+            print(name)
+            return
+    raise RuntimeError(f"No official base Android SDK package for compileSdk {version}")
+
+
 def android_tool(name):
     sdk = Path(os.environ.get("ANDROID_HOME") or os.environ["ANDROID_SDK_ROOT"])
     choices = list((sdk / "build-tools").glob(f"*/{name}"))
@@ -283,7 +307,9 @@ def verify():
     assert package and package[1] == "com.follow.clash"
     assert package[2] == str(context["version_code"])
     assert package[3] == context["upstream"]["tag_name"][1:]
-    apkanalyzer = Path(os.environ["ANDROID_HOME"]) / "cmdline-tools/latest/bin/apkanalyzer"
+    apkanalyzer = shutil.which("apkanalyzer")
+    if not apkanalyzer:
+        raise RuntimeError("apkanalyzer is missing from the Android command-line tools PATH")
     xml = run(apkanalyzer, "manifest", "print", apk)
     app = ET.fromstring(xml).find("application")
     items = [e for e in app.findall("meta-data") if e.get(ANDROID + "name") == IMPELLER]
@@ -366,10 +392,10 @@ def publish():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare", "verify", "publish", "check-source"])
+    parser.add_argument("command", choices=["prepare", "verify", "publish", "check-source", "sdk-package"])
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     args = parser.parse_args()
     if args.command == "check-source":
         check_sources(args.repo)
     else:
-        {"prepare": prepare, "verify": verify, "publish": publish}[args.command]()
+        {"prepare": prepare, "verify": verify, "publish": publish, "sdk-package": sdk_package}[args.command]()
