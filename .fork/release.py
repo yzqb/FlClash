@@ -230,7 +230,7 @@ def prepare():
             raise RuntimeError("Upstream pubspec version does not match its stable tag")
         clock_code = int(datetime.now(timezone.utc).strftime("%Y%m%d%H"))
         version_code = max(int(match[2]), clock_code, int(previous.get("version_code", 0)) + 1)
-        if version_code > 2100000000:
+        if version_code + 2000 > 2100000000:
             raise RuntimeError("Android versionCode exceeds its maximum")
         pubspec_path.write_text(pubspec[:match.start()] + f"version: {match[1]}+{version_code}" + pubspec[match.end():])
         save(maintenance / "build.json", dict(upstream_tag=upstream_tag, upstream_sha=upstream_sha,
@@ -305,7 +305,11 @@ def verify():
     badging = run(android_tool("aapt"), "dump", "badging", apk)
     package = re.search(r"^package: name='([^']+)' versionCode='([^']+)' versionName='([^']+)'", badging, re.M)
     assert package and package[1] == "com.follow.clash"
-    assert package[2] == str(context["version_code"])
+    # Flutter 3.50.0 split-per-ABI: ARM64 ABI_VERSION=2 adds 2 * 1000.
+    expected_version_code = int(context["version_code"]) + 2000
+    if package[2] != str(expected_version_code):
+        raise RuntimeError(f"ARM64 APK versionCode mismatch: expected {expected_version_code} "
+                           f"(base {context['version_code']} + ABI offset 2000), got {package[2]}")
     assert package[3] == context["upstream"]["tag_name"][1:]
     apkanalyzer = shutil.which("apkanalyzer")
     if not apkanalyzer:

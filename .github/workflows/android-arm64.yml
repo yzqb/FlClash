@@ -142,6 +142,15 @@ jobs:
       - name: Publish a verified stable release with the exact upstream notes
         if: steps.prepare.outputs.skip != 'true'
         run: python3 .fork/release.py publish
+      - name: Preserve built release files after failure
+        if: failure() && steps.prepare.outputs.source != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-dist-${{ steps.prepare.outputs.tag }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.prepare.outputs.source }}/dist/
+          if-no-files-found: ignore
+          retention-days: 14
+          include-hidden-files: false
       - name: Remember a failed stable build
         if: failure() && steps.prepare.outputs.tag != ''
         uses: actions/upload-artifact@v4
