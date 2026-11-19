@@ -1,6 +1,8 @@
 name: Android arm64 stable
 
 on:
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       upstream_tag:
@@ -54,6 +56,8 @@ jobs:
           channel: stable
           flutter-version: ${{ steps.prepare.outputs.flutter }}
           cache: true
+      - uses: android-actions/setup-android@v3
+        if: steps.prepare.outputs.skip != 'true'
       - name: Install the stable tag's native toolchains
         if: steps.prepare.outputs.skip != 'true'
         env:
