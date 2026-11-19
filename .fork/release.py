@@ -232,7 +232,8 @@ def prepare():
                          f"Build Android arm64 from {UPSTREAM}@{upstream_tag} ({upstream_sha})", cwd=source)
         run("git", "checkout", "--detach", custom_sha, cwd=source)
     check_sources(source)
-    run("git", "submodule", "update", "--init", "--recursive", cwd=source)
+    run("git", "-c", "url.https://github.com/.insteadOf=git@github.com:",
+        "submodule", "update", "--init", "--recursive", cwd=source)
     context = dict(source=str(source), branch=branch, control_sha=control_sha,
                    custom_sha=custom_sha, fork_tag=fork_tag, upstream=release,
                    version_code=version_code)
