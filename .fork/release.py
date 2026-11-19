@@ -188,7 +188,7 @@ def prepare():
     control = Path.cwd()
     release = stable_release(os.environ.get("REQUESTED_TAG", "").strip())
     upstream_tag = release["tag_name"]
-    fork_tag = f"{upstream_tag}-yzqb.1"
+    fork_tag = upstream_tag.removeprefix("v")
     existing_release = api(f"repos/{FORK}/releases/tags/{fork_tag}", missing=True)
     if existing_release and not existing_release["draft"]:
         if existing_release["prerelease"]:
@@ -196,7 +196,7 @@ def prepare():
         if (existing_release["body"] or "") != release_notes(release):
             raise RuntimeError("Published body differs from the filtered upstream changelog")
         names = {a["name"] for a in existing_release["assets"]}
-        version = fork_tag[1:]
+        version = fork_tag.removeprefix("v")
         if not {f"FlClash-dev-{version}-android-arm64.apk", f"FlClash-dev-{version}-SHA256SUMS"} <= names:
             raise RuntimeError("Published release is incomplete")
         print(f"Already published: {fork_tag}")
@@ -307,7 +307,7 @@ def verify():
     if len(entries) != 1:
         raise RuntimeError("Expected exactly one release artifact")
     entry = entries[0]
-    version = context["fork_tag"][1:]
+    version = context["fork_tag"].removeprefix("v")
     name = f"FlClash-dev-{version}-android-arm64.apk"
     checksums = f"FlClash-dev-{version}-SHA256SUMS"
     assert entry["name"] == name and entry["os"] == "android" and entry["arch"] == "arm64"

@@ -1,8 +1,8 @@
 {
   "upstream_tag": "v0.9.4",
   "upstream_release_id": 451007901,
-  "fork_tag": "v0.9.4-yzqb.1",
+  "fork_tag": "0.9.4",
   "custom_sha": "a910563f8ef956388c05b2982dfeb9ada2d3c9a6",
   "version_code": 2026110401,
-  "release_url": "https://github.com/yzqb/FlClash/releases/tag/v0.9.4-yzqb.1"
+  "release_url": "https://github.com/yzqb/FlClash/releases/tag/0.9.4"
 }
