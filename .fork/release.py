@@ -30,6 +30,16 @@ def run(*args, cwd=None):
 def api(path, missing=False):
     result = subprocess.run(["gh", "api", path], text=True, capture_output=True)
     if result.returncode:
+        prefix = f"repos/{FORK}/releases/tags/"
+        if "HTTP 404" in result.stderr and path.startswith(prefix):
+            tag = path[len(prefix):]
+            for page in range(1, 11):
+                releases = api(f"repos/{FORK}/releases?per_page=100&page={page}")
+                match = next((r for r in releases if r["tag_name"] == tag), None)
+                if match:
+                    return match
+                if len(releases) < 100:
+                    break
         if missing and "HTTP 404" in result.stderr:
             return None
         raise RuntimeError(result.stderr.strip())
@@ -316,9 +326,16 @@ def verify():
     items = [e for e in app.findall("meta-data") if e.get(ANDROID + "name") == IMPELLER]
     assert len(items) == 1 and items[0].get(ANDROID + "value") == "false"
     signature = run(android_tool("apksigner"), "verify", "--verbose", "--print-certs", apk)
-    actual = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)", signature)
+    # Build-tools 37 labels the signer "V2 Signer: certificate" rather than "Signer #1 certificate".
+    actual = re.findall(
+        r"^(?:Signer #\d+ certificate|V[1-4](?:\.\d+)? Signer: certificate) SHA-256 digest: ([0-9a-fA-F]{64})$",
+        signature, re.M)
     expected = os.environ["EXPECTED_CERT_SHA256"].lower()
-    assert len(actual) == 1 and actual[0].lower() == expected
+    count = re.search(r"^Number of signers: (\d+)$", signature, re.M)
+    if not count or int(count[1]) != 1:
+        raise RuntimeError("APK must have exactly one verified signer")
+    if not actual or any(digest.lower() != expected for digest in actual):
+        raise RuntimeError(f"APK signer certificate mismatch: expected {expected}, parsed {actual}")
     context["assets"] = [str(apk), str(dist / checksums), str(dist / "manifest.json")]
     context["verified"] = True
     save(context_path(), context)
